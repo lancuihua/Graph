@@ -4,7 +4,7 @@ from utils import DGraphFin
 from utils.utils import prepare_folder
 from utils.evaluator import Evaluator
 from torch_geometric.loader import NeighborSampler
-from models import BIAN_mini_batch
+from models import BIAN_neighsampler
 from logger import Logger
 from tqdm import tqdm
 
@@ -18,12 +18,14 @@ import torch_geometric.transforms as T
 from torch_sparse import SparseTensor
 from torch_geometric.utils import to_undirected
 import pandas as pd
+import warnings
+warnings.filterwarnings('ignore', '.*Sparse CSR tensor support is in beta state.*')
 
 eval_metric = 'auc'
 
 BIAN_parameters = {'lr': 0.003
     , 'num_layers': 2
-    , 'hidden_channels': 128
+    , 'hidden_channels': 512
     , 'dropout': 0.0
     , 'batchnorm': False
     , 'l2': 5e-7
@@ -101,7 +103,7 @@ def main():
     if args.dataset == 'DGraphFin': nlabels = 2
 
     data = dataset[0]
-    data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
+    # data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
 
     if args.dataset in ['DGraphFin']:  # 标准化
         x = data.x
@@ -129,9 +131,9 @@ def main():
     print('result_dir:', result_dir)
 
     train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
-                                   num_workers=1)
+                                   num_workers=8)
     layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
-                                   num_workers=1)
+                                   num_workers=8)
     model = None
     para_dict = None
     if args.model == 'BAIN_neighsampler':
@@ -139,7 +141,7 @@ def main():
         model_para = para_dict.copy()
         model_para.pop('lr')
         model_para.pop('l2')
-        model = BIAN_mini_batch.BIAN(x_in_channels=data.x.size(-1), edge_in_channels=1,
+        model = BIAN_neighsampler.BIAN(x_in_channels=data.x.size(-1), edge_in_channels=1,
                                      out_channels=512, num_classes=nlabels, **model_para).to(device)
     if not model:
         raise ValueError('No Model')
