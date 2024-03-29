@@ -7,7 +7,7 @@ from torch_geometric.loader import NeighborSampler
 from models import BIAN_neighsampler
 from logger import Logger
 from tqdm import tqdm
-
+import os
 import argparse
 
 import torch
@@ -19,6 +19,7 @@ from torch_sparse import SparseTensor
 from torch_geometric.utils import to_undirected
 import pandas as pd
 import warnings
+
 warnings.filterwarnings('ignore', '.*Sparse CSR tensor support is in beta state.*')
 
 eval_metric = 'auc'
@@ -34,9 +35,10 @@ BIAN_parameters = {'lr': 0.003
                    }
 
 
-def train(epoch, train_loader, model, data, train_idx, optimizer, device):
+def train(epoch, train_loader, model, data, train_idx, optimizer,device):
     model.train()
-
+    data = data.to(device)
+    model = model.to(device)
     pbar = tqdm(total=train_idx.size(0), ncols=80)
     pbar.set_description(f'Epoch {epoch:02d}')
 
@@ -44,9 +46,9 @@ def train(epoch, train_loader, model, data, train_idx, optimizer, device):
     for batch_size, n_id, adjs in train_loader:
         # `adjs` holds a list of `(edge_index, e_id, size)` tuples.
         adjs = [adj.to(device) for adj in adjs]
-
+        n_id = n_id.to(device)
         optimizer.zero_grad()
-        out = model(data,n_id, adjs)
+        out = model(data, n_id, adjs)
         loss = F.nll_loss(out, data.y[n_id[:batch_size]])
         loss.backward()
         optimizer.step()
@@ -61,18 +63,19 @@ def train(epoch, train_loader, model, data, train_idx, optimizer, device):
 
 
 @torch.no_grad()
-def test(layer_loader, model, data, split_idx, evaluator, device):
+def test(layer_loader, model, data, split_idx, evaluator):
     # data.y is labels of shape (N, )
     model.eval()
-
-    out = model.inference(data, layer_loader, device)
+    model = model.cpu()
+    data = data.cpu()
+    out = model.inference(data, layer_loader)
     #     out = model.inference_all(data)
     y_pred = out.exp()  # (N,num_classes)
 
     losses, eval_results = dict(), dict()
     for key in ['train', 'valid', 'test']:
         node_id = split_idx[key]
-        node_id = node_id.to(device)
+        node_id = node_id.cpu()
         losses[key] = F.nll_loss(out[node_id], data.y[node_id]).item()
         eval_results[key] = evaluator.eval(data.y[node_id], y_pred[node_id])[eval_metric]
 
@@ -81,21 +84,23 @@ def test(layer_loader, model, data, split_idx, evaluator, device):
 
 def main():
     parser = argparse.ArgumentParser(description='minibatch_gnn_models')
-    parser.add_argument('--device', type=str, default='cpu')
+    parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--dataset', type=str, default='DGraphFin')
-    parser.add_argument('--log_steps', type=int, default=10)
+    parser.add_argument('--log_steps', type=int, default=1)
     parser.add_argument('--model', type=str, default='BAIN_neighsampler')
     parser.add_argument('--use_embeddings', action='store_true')
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--runs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=80)
+    parser.add_argument('--runs', type=int, default=1)
     parser.add_argument('--fold', type=int, default=0)
+    parser.add_argument('--save_dir', type=str, default='./checkout')
+    parser.add_argument('--experiment', type=str, default='1')
 
     args = parser.parse_args()
     print(args)
 
-
-    device = f'{args.device}' if torch.backends.mps.is_available() else 'cpu'
+    device = f'{args.device}' if torch.cuda.is_available() else 'cpu'
     device = torch.device(device)
+    print(device)
 
     dataset = DGraphFin(root='./dataset/', name=args.dataset, transform=T.ToSparseTensor())
 
@@ -103,7 +108,7 @@ def main():
     if args.dataset == 'DGraphFin': nlabels = 2
 
     data = dataset[0]
-    # data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
+    #data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
 
     if args.dataset in ['DGraphFin']:  # 标准化
         x = data.x
@@ -124,16 +129,16 @@ def main():
     else:
         kfolds = False
 
-    data = data.to(device)
+    data = data
     train_idx = split_idx['train']
     # 准备模型训练结果的文件夹
     result_dir = prepare_folder(args.dataset, args.model)
     print('result_dir:', result_dir)
 
     train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
-                                   num_workers=8)
-    layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
-                                   num_workers=8)
+                                   num_workers=32)
+    layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=2048, shuffle=False,
+                                   num_workers=32)
     model = None
     para_dict = None
     if args.model == 'BAIN_neighsampler':
@@ -142,7 +147,7 @@ def main():
         model_para.pop('lr')
         model_para.pop('l2')
         model = BIAN_neighsampler.BIAN(x_in_channels=data.x.size(-1), edge_in_channels=1,
-                                     out_channels=512, num_classes=nlabels, **model_para).to(device)
+                                       out_channels=512, device=device, num_classes=nlabels, **model_para)
     if not model:
         raise ValueError('No Model')
     print(f'Model {args.model} initialized')
@@ -162,8 +167,8 @@ def main():
         best_out = None
 
         for epoch in range(1, args.epochs + 1):
-            loss = train(epoch, train_loader, model, data, train_idx, optimizer, device)
-            eval_results, losses, out = test(layer_loader, model, data, split_idx, evaluator, device)
+            loss = train(epoch, train_loader, model, data, train_idx, optimizer,device)
+            eval_results, losses, out = test(layer_loader, model, data, split_idx, evaluator)
             train_eval, valid_eval, test_eval = eval_results['train'], eval_results['valid'], eval_results['test']
             train_loss, valid_loss, test_loss = losses['train'], losses['valid'], losses['test']
 
@@ -175,6 +180,16 @@ def main():
                 best_out = out.cpu()
 
             if epoch % args.log_steps == 0:
+                save_path = os.path.join(args.save_dir, args.experiment)
+                if not os.path.exists(save_path):
+                    os.makedirs(save_path)
+                if epoch % 5 == 0:
+                    try:
+                        save_name = '{}_{}.pth'.format(epoch, valid_loss)
+                        torch.save(model.state_dict(), os.path.join(save_path, save_name))
+                    except:
+                        pass
+
                 print(f'Run: {run + 1:02d}, '
                       f'Epoch: {epoch:02d}, '
                       f'Loss: {loss:.4f}, '

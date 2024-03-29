@@ -59,8 +59,31 @@ def convert(adj: SparseTensor, nodes: torch.tensor):
     return line_graph, line_edge_id
 
 
+def convert_to_line_graph(adj: SparseTensor, size: int):
+    # size: 原图中边的个数
+    if not isinstance(adj, SparseTensor):
+        raise TypeError('Input type is {}; we need SparseTensor'.format(type(adj)))
+
+    # 获取目标节点对应的边的起点和终点
+    row, col, _ = adj.detach().coo()
+
+    a1 = row.unsqueeze(1) == row.unsqueeze(0)  # 共享起点
+    a2 = col.unsqueeze(1) == col.unsqueeze(0)  # 共享重点
+    a3 = (row.unsqueeze(1) == col.unsqueeze(0)) & (col.unsqueeze(1) != row.unsqueeze(0))  # 一个起点，一个终点
+    # 找到所有与目标节点共享起点或终点的边
+    node_relation = a1 | a2 | a3
+
+    # 将对角线元素设为0，避免自循环
+    node_relation.fill_diagonal_(0)
+
+    # 获取线图的边索引和边对应的节点
+    line_row, line_col = node_relation.nonzero().t()
+    line_graph = SparseTensor(row=line_row, col=line_col, sparse_sizes=(size, size)).to_symmetric()
+
+    return line_graph
 
 def balance(adjs: list):
+    adjs = adjs.copy()
     n = len(adjs)
     for i in range(n - 1):
         adj_1, e_id_1, _ = adjs[n - i - 1]  # 小

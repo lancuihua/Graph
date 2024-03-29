@@ -6,12 +6,14 @@ from models import GAT_BIAN
 
 class BIAN(torch.nn.Module):
     def __init__(self, x_in_channels, edge_in_channels, hidden_channels, out_channels, num_classes, num_layers, dropout,
+                 device,
                  layer_heads=[], batchnorm=True):
         super(BIAN, self).__init__()
-        self.sage = SAGE_BIAN.SAGE(x_in_channels, hidden_channels, out_channels, num_layers, dropout)
+        self.device = device
+        self.sage = SAGE_BIAN.SAGE(x_in_channels, hidden_channels, out_channels, num_layers, dropout, device, batchnorm)
+        self.gat = GAT_BIAN.GAT(edge_in_channels, hidden_channels, out_channels, num_layers, dropout, device,
+                                layer_heads, batchnorm)
         self.w = torch.nn.Linear(in_features=2 * out_channels, out_features=num_classes)
-        self.gat = GAT_BIAN.GAT(edge_in_channels, hidden_channels, out_channels, num_layers, dropout, layer_heads)
-
     def reset_parameters(self):
         self.w.reset_parameters()
         self.sage.reset_parameters()
@@ -31,11 +33,11 @@ class BIAN(torch.nn.Module):
         x = self.w(x)
         return x.log_softmax(dim=-1)
 
-    def inference(self, data, layer_loader, device):
+    def inference(self, data, layer_loader):
         x_all = data.x
         edge_all = data.edge_attr
-        x1, pbar = self.sage.inference(x_all, layer_loader, device)
-        x2 = self.gat.inference(edge_all, layer_loader, device, pbar)
+        x1, pbar = self.sage.inference(x_all, layer_loader)
+        x2 = self.gat.inference(edge_all, layer_loader, pbar)
         x = torch.concat([x1, x2], dim=-1)
         x = self.w(x)
         return x.log_softmax(dim=-1)
