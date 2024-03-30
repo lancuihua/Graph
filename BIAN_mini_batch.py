@@ -23,19 +23,21 @@ import warnings
 warnings.filterwarnings('ignore', '.*Sparse CSR tensor support is in beta state.*')
 
 eval_metric = 'auc'
-
+# hidden_channels, out_channels, num_layers, dropout,device
+# layer_heads=[], batchnorm=True
 BIAN_parameters = {'lr': 0.003
-    , 'num_layers': 2
-    , 'hidden_channels': 512
-    , 'dropout': 0.0
-    , 'batchnorm': False
     , 'l2': 5e-7
-
+    , 'hidden_channels': 512
+    , 'out_channels': 512
+    , 'num_layers': 2
+    , 'dropout': 0.0
     , 'layer_heads': [4, 1]
+    , 'linears': [1024, 512, 256]
+    , 'batchnorm': False
                    }
 
 
-def train(epoch, train_loader, model, data, train_idx, optimizer,device):
+def train(epoch, train_loader, model, data, train_idx, optimizer, device):
     model.train()
     data = data.to(device)
     model = model.to(device)
@@ -90,10 +92,10 @@ def main():
     parser.add_argument('--model', type=str, default='BAIN_neighsampler')
     parser.add_argument('--use_embeddings', action='store_true')
     parser.add_argument('--epochs', type=int, default=80)
-    parser.add_argument('--runs', type=int, default=1)
+    parser.add_argument('--runs', type=int, default=3)
     parser.add_argument('--fold', type=int, default=0)
     parser.add_argument('--save_dir', type=str, default='./checkout')
-    parser.add_argument('--experiment', type=str, default='1')
+    parser.add_argument('--experiment', type=str, default='2')
 
     args = parser.parse_args()
     print(args)
@@ -108,7 +110,7 @@ def main():
     if args.dataset == 'DGraphFin': nlabels = 2
 
     data = dataset[0]
-    #data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
+    # data.adj_t = data.adj_t.to_symmetric()  # 有向图转化为无向图
 
     if args.dataset in ['DGraphFin']:  # 标准化
         x = data.x
@@ -135,9 +137,9 @@ def main():
     result_dir = prepare_folder(args.dataset, args.model)
     print('result_dir:', result_dir)
 
-    train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
+    train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 10], batch_size=1024, shuffle=True,
                                    num_workers=32)
-    layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=2048, shuffle=False,
+    layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
                                    num_workers=32)
     model = None
     para_dict = None
@@ -146,8 +148,9 @@ def main():
         model_para = para_dict.copy()
         model_para.pop('lr')
         model_para.pop('l2')
-        model = BIAN_neighsampler.BIAN(x_in_channels=data.x.size(-1), edge_in_channels=1,
-                                       out_channels=512, device=device, num_classes=nlabels, **model_para)
+        # x_in_channels, edge_in_channels, num_classes,device
+        model = BIAN_neighsampler.BIAN(x_in_channels=data.x.size(-1), edge_in_channels=data.edge_attr.size(-1),
+                                       device=device, num_classes=nlabels, **model_para)
     if not model:
         raise ValueError('No Model')
     print(f'Model {args.model} initialized')
@@ -158,7 +161,7 @@ def main():
     for run in range(args.runs):
         import gc
         gc.collect()
-        print(sum(p.numel() for p in model.parameters()))
+        print("Total parameters: ", sum(p.numel() for p in model.parameters()))
 
         model.reset_parameters()
         optimizer = torch.optim.Adam(model.parameters(), lr=para_dict['lr'], weight_decay=para_dict['l2'])
@@ -167,7 +170,7 @@ def main():
         best_out = None
 
         for epoch in range(1, args.epochs + 1):
-            loss = train(epoch, train_loader, model, data, train_idx, optimizer,device)
+            loss = train(epoch, train_loader, model, data, train_idx, optimizer, device)
             eval_results, losses, out = test(layer_loader, model, data, split_idx, evaluator)
             train_eval, valid_eval, test_eval = eval_results['train'], eval_results['valid'], eval_results['test']
             train_loss, valid_loss, test_loss = losses['train'], losses['valid'], losses['test']
@@ -187,6 +190,7 @@ def main():
                     try:
                         save_name = '{}_{}.pth'.format(epoch, valid_loss)
                         torch.save(model.state_dict(), os.path.join(save_path, save_name))
+                        print("save {} to {}".format(save_name, save_path))
                     except:
                         pass
 

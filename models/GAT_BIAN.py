@@ -106,7 +106,9 @@ class GAT(torch.nn.Module):
         # 补充没有的边
         adjs = Transform.balance(adjs)
         pre_e_id = adjs[0][1]
-        x = x[pre_e_id].unsqueeze(dim=-1)
+        x = x[pre_e_id]
+        if x.dim() == 1:
+            x = x.unsqueeze(dim=-1)
         # 转化为线图
         new_adjs = []
         for adj, e_id, size in adjs:
@@ -121,7 +123,7 @@ class GAT(torch.nn.Module):
             if i != self.num_layers - 1:
                 if self.batchnorm:
                     x = self.bns[i](x)
-                x = F.dropout(x, p=0.5, training=self.training)
+                x = F.dropout(x, p=self.dropout, training=self.training)
             pre_e_id = e_id
         H = self.make_h(adjs[-1])
         D = self.make_d(H)
@@ -131,7 +133,8 @@ class GAT(torch.nn.Module):
     def inference_all(self, data):
         x, adj_t = data.edge_attr, data.adj_t
         num_edges = x.numel()
-        x = x.unsqueeze(dim=-1)
+        if x.dim()  == 1:
+            x = x.unsqueeze(dim=-1)
         if x.dim() != 2:
             raise ValueError('must be 2 dimension, your dimension is {}'.format(x.dim()))
         new_adj = Transform.convert_to_line_graph(adj_t, size=num_edges)
@@ -149,9 +152,8 @@ class GAT(torch.nn.Module):
         return x
 
     def inference(self, x_all, layer_loader, pbar):
-        x_all = x_all.unsqueeze(dim=-1)
-        if x_all.dim() != 2:
-            raise ValueError('must be 2 dimension, your dimension is {}'.format(x_all.dim()))
+        if x_all.dim() == 1:
+            x_all = x_all.unsqueeze(dim=-1)
         xs = []
         for batch_size, _, adj in layer_loader:
             # 转化为线图
@@ -167,6 +169,7 @@ class GAT(torch.nn.Module):
                     x = F.relu(x)
                     if self.batchnorm:
                         x = self.bns[i](x)
+                    x = F.dropout(x, p=self.dropout, training=self.training)
                 pbar.update(batch_size)
             H = self.make_h(adj).cpu()
             D = self.make_d(H).cpu()

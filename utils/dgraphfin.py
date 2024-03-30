@@ -10,30 +10,36 @@ from torch_geometric.data import Data
 def read_dgraphfin(folder):
     print('read_dgraphfin')
     names = ['dgraphfin.npz']
-    items = [np.load(folder+'/'+name) for name in names]
-    
+    items = [np.load(folder + '/' + name) for name in names]
+
     x = items[0]['x']
-    y = items[0]['y'].reshape(-1,1)
+    y = items[0]['y'].reshape(-1, 1)
     edge_index = items[0]['edge_index']
     edge_type = items[0]['edge_type']
+    edge_timestamp = items[0]['edge_timestamp']
     train_mask = items[0]['train_mask']
     valid_mask = items[0]['valid_mask']
     test_mask = items[0]['test_mask']
 
     x = torch.tensor(x, dtype=torch.float).contiguous()
     y = torch.tensor(y, dtype=torch.int64)
+
     edge_index = torch.tensor(edge_index.transpose(), dtype=torch.int64).contiguous()
-    edge_type = torch.tensor(edge_type, dtype=torch.float)
+    edge_type = torch.tensor(edge_type, dtype=torch.float).unsqueeze(dim = -1)
+    edge_timestamp = torch.tensor(edge_timestamp, dtype=torch.float).unsqueeze(dim = -1)
+
+    edge_value = torch.cat([edge_timestamp, edge_type], dim=-1)
     train_mask = torch.tensor(train_mask, dtype=torch.int64)
     valid_mask = torch.tensor(valid_mask, dtype=torch.int64)
     test_mask = torch.tensor(test_mask, dtype=torch.int64)
 
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_type, y=y)
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_value, y=y)
     data.train_mask = train_mask
     data.valid_mask = valid_mask
     data.test_mask = test_mask
 
     return data
+
 
 class DGraphFin(InMemoryDataset):
     r"""
@@ -52,10 +58,9 @@ class DGraphFin(InMemoryDataset):
 
     url = ''
 
-    def __init__(self, root: str, name: str, 
+    def __init__(self, root: str, name: str,
                  transform: Optional[Callable] = None,
                  pre_transform: Optional[Callable] = None):
-        
         self.name = name
         self.nlables = 2
         super().__init__(root, transform, pre_transform)
@@ -80,8 +85,9 @@ class DGraphFin(InMemoryDataset):
 
     def download(self):
         pass
-#         for name in self.raw_file_names:
-#             download_url('{}/{}'.format(self.url, name), self.raw_dir)
+
+    #         for name in self.raw_file_names:
+    #             download_url('{}/{}'.format(self.url, name), self.raw_dir)
 
     def process(self):
         data = read_dgraphfin(self.raw_dir)

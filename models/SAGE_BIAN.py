@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv
 from tqdm import tqdm
 
+
 class SAGE(torch.nn.Module):
     def __init__(self
                  , in_channels
@@ -10,10 +11,9 @@ class SAGE(torch.nn.Module):
                  , out_channels
                  , num_layers
                  , dropout
-                 ,device
+                 , device
                  , batchnorm=True):
         super(SAGE, self).__init__()
-
         self.convs = torch.nn.ModuleList()
         self.convs.append(SAGEConv(in_channels, hidden_channels))
         self.bns = torch.nn.ModuleList()
@@ -47,7 +47,7 @@ class SAGE(torch.nn.Module):
                 if self.batchnorm:
                     x = self.bns[i](x)
                 x = F.relu(x)
-                x = F.dropout(x, p=0.5, training=self.training)
+                x = F.dropout(x, p=self.dropout, training=self.training)
 
         return x
 
@@ -73,12 +73,12 @@ class SAGE(torch.nn.Module):
                 x = x_all[n_id].cpu()
                 x_target = x[:size[1]]
 
-
                 x = self.convs[i]((x, x_target), edge_index)
                 if i != self.num_layers - 1:
                     x = F.relu(x)
                     if self.batchnorm:
                         x = self.bns[i](x)
+                    x = F.dropout(x, p=self.dropout, training=self.training)
                 xs.append(x)
 
                 pbar.update(batch_size)
