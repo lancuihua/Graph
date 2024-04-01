@@ -68,7 +68,7 @@ def convert_to_line_graph(adj: SparseTensor, size: int):
     row, col, _ = adj.detach().coo()
 
     a1 = row.unsqueeze(1) == row.unsqueeze(0)  # 共享起点
-    a2 = col.unsqueeze(1) == col.unsqueeze(0)  # 共享重点
+    a2 = col.unsqueeze(1) == col.unsqueeze(0)  # 共享终点
     a3 = (row.unsqueeze(1) == col.unsqueeze(0)) & (col.unsqueeze(1) != row.unsqueeze(0))  # 一个起点，一个终点
     # 找到所有与目标节点共享起点或终点的边
     node_relation = a1 | a2 | a3
